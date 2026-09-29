@@ -1,0 +1,58 @@
+name: RDP-PC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest 
+    timeout-minutes: 360
+
+    steps:
+      - name: 1. Habilitar o RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Restart-Service TermService -Force
+
+      - name: 2. Criar Usuário e Senha (ADMIN)
+        shell: powershell
+        run: |
+          $User = "Admin"
+          $Password = "P@ssw0rd2024!RDP"
+          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          
+          New-LocalUser -Name $User -Password $SecurePassword -FullName "Admin" -Description "Usuario Admin RDP"
+          Add-LocalGroupMember -Group "Administrators" -Member $User
+          
+          Write-Host "✅ Usuário $User criado com sucesso!"
+
+      - name: 3. Instalar e Conectar Tailscale
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale-setup.exe"
+          Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
+          
+          $TailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+          
+          # ⚠️ COLE SUA CHAVE DO TAILSCALE AQUI DENTRO DAS ASPAS:
+          $AuthKey = "COLE_SEU_TOKEN_TAILSCALE_AQUI"
+          
+          & $TailscalePath up --authkey "$AuthKey" --hostname "github-rdp-pc" --unattended
+          
+          Start-Sleep -Seconds 5
+          $IP = & $TailscalePath ip -4
+          
+          Write-Host "=================================================="
+          Write-Host "✅ Tailscale Conectado!"
+          Write-Host "Use este IP para conectar no RDP: $IP"
+          Write-Host "Usuário: Admin"
+          Write-Host "Senha: P@ssw0rd2024!RDP"
+          Write-Host "=================================================="
+
+      - name: 4. Manter a Máquina Ligada
+        shell: powershell
+        run: |
+          while ($true) { Start-Sleep -Seconds 3600 }
