@@ -9,66 +9,70 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Configure RDP
+      - name: 1. Habilitar o RDP
         shell: powershell
         run: |
-          $rdpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
-          $tcpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
-          
-          Set-ItemProperty -Path $rdpPath -Name 'fDenyTSConnections' -Value 0
-          Set-ItemProperty -Path $tcpPath -Name 'UserAuthentication' -Value 1
-          Set-ItemProperty -Path $tcpPath -Name 'SecurityLayer' -Value 2
-          
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          
-          if (Get-Service -Name TermService -ErrorAction SilentlyContinue) {
-              Restart-Service -Name TermService -Force
-          }
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Restart-Service TermService -Force
 
-      - name: Create RDP User
+      - name: 2. Criar Usuário e Senha (ADMIN)
         shell: powershell
         run: |
-          $Username = "Skyro"
-          # Senha forte para o usuário
-          $Password = "P@ssw0rd2024!RDP" 
+          $User = "Admin"
+          $Password = "P@ssw0rd2024!RDP"
           $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           
-          New-LocalUser -Name $Username -Password $SecurePassword -FullName $Username -Description "Usuario RDP Tailscale"
-          Add-LocalGroupMember -Group "Administrators" -Member $Username
+          New-LocalUser -Name $User -Password $SecurePassword -FullName "Admin" -Description "Usuario Admin RDP"
+          Add-LocalGroupMember -Group "Administrators" -Member $User
           
-          Write-Host "Usuário $Username criado com sucesso!"
+          Write-Host "✅ Usuário $User criado com sucesso!"
 
-      - name: Install Tailscale
+      - name: 3. Instalar o Tailscale
         shell: powershell
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           Invoke-WebRequest -Uri $tsUrl -OutFile "tailscale-setup.msi"
           Start-Process msiexec.exe -ArgumentList "/i tailscale-setup.msi /quiet /norestart" -Wait
 
-      - name: Establish Tailscale Connection
+      - name: 4. Conectar ao Tailscale (Login Manual)
         shell: powershell
         run: |
-          # O comando 'up' SEM a chave vai gerar o link de login no log
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up
+          $TailscalePath = "$env:ProgramFiles\Tailscale\tailscale.exe"
           
-          # Dá um tempo para você clicar no link e autorizar
-          Write-Host "Aguardando autenticação..."
-          Start-Sleep -Seconds 60 
+          # Inicia o Tailscale SEM chave. Isso vai gerar um link de login no log.
+          Write-Host "⚠️ ATENÇÃO: PROCURE O LINK LOGO ABAIXO E CLIQUE NELE PARA AUTORIZAR A MÁQUINA ⚠️"
+          & $TailscalePath up --hostname "github-rdp-pc" --accept-routes
           
-          # Pega o IP gerado
-          $IP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          Write-Host "✅ Tailscale IP: $IP"
+          Write-Host "Aguardando você clicar no link de autenticação..."
+          
+          # Loop para esperar você clicar no link (espera até 5 minutos)
+          $ip = $null
+          $timeout = 300
+          $elapsed = 0
+          
+          while (-not $ip -and $elapsed -lt $timeout) {
+              Start-Sleep -Seconds 5
+              $elapsed += 5
+              $ip = & $TailscalePath ip -4
+              if ($ip) { break }
+              Write-Host "Aguardando autorização... ($elapsed segundos)"
+          }
+          
+          if ($ip) {
+              Write-Host "=================================================="
+              Write-Host "✅ Tailscale Conectado com sucesso!"
+              Write-Host "Use este IP para conectar no RDP: $ip"
+              Write-Host "Usuário: Admin"
+              Write-Host "Senha: P@ssw0rd2024!RDP"
+              Write-Host "=================================================="
+          } else {
+              Write-Error "❌ Tempo esgotado. Você não clicou no link a tempo."
+              exit 1
+          }
 
-      - name: Verify RDP Accessibility
+      - name: 5. Manter a Máquina Ligada
         shell: powershell
         run: |
-          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          Write-Host "Testando conexão na porta 3389 no IP $ip..."
-          Test-NetConnection -ComputerName $ip -Port 3389
-
-      - name: Maintain Connection
-        shell: powershell
-        run: |
-          # Loop infinito para a máquina não desligar
           while ($true) { Start-Sleep -Seconds 3600 }
